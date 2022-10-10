@@ -122,6 +122,7 @@ protected:
                         bool cam_new = false);
     void removeDeviceNames(int camera_id);
 
+    bool isExternalCamera(const std::string& cameraId) const;
 };
 
 }  // namespace implementation
