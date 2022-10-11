@@ -28,6 +28,9 @@
 #include <regex>
 #include <string.h>
 #include <utils/Trace.h>
+#include <android-base/parseint.h>
+#include <android-base/properties.h>
+#include <android-base/strings.h>
 
 namespace android {
 namespace hardware {
@@ -44,6 +47,7 @@ const std::regex kDeviceNameRE("device@([0-9]+\\.[0-9]+)/legacy/(.+)");
 const char *kHAL3_4 = "3.4";
 const char *kHAL3_5 = "3.5";
 const int kMaxCameraDeviceNameLen = 128;
+const std::string kIdMapProperty = "persist.vendor.camera.xiaomi.remapid";
 
 bool matchDeviceName(const hidl_string& deviceName, std::string* deviceVersion,
                      std::string* cameraId) {
@@ -59,6 +63,19 @@ bool matchDeviceName(const hidl_string& deviceName, std::string* deviceVersion,
         return true;
     }
     return false;
+}
+
+static std::vector<std::string> GetArrayProperty(const std::string& key)
+{
+    std::string value = android::base::GetProperty(key, "");
+    std::vector<std::string> values;
+    std::string_view sv = value;
+
+    ALOGI("Remap property: %s", value.c_str());
+    values = android::base::Split(android::base::Trim(std::string(sv)), " ");
+    ALOGI("Remapping entries: %d", (int)values.size());
+
+    return values;
 }
 
 } // anonymous namespace
@@ -269,12 +286,54 @@ bool LegacyCameraProviderImpl_2_4::isExternalCamera(const std::string& cameraId)
 
 std::string LegacyCameraProviderImpl_2_4::mapToFwkId(const std::string& cameraId) const
 {
+    if (mHalToFwkId.find(cameraId) == mHalToFwkId.end()) {
+        ALOGI("Remapped HAL ID %s to %s", cameraId.c_str(), cameraId.c_str());
         return cameraId;
+    }
+
+    ALOGI("Remapped HAL ID %s to %s", cameraId.c_str(),
+          mHalToFwkId.at(cameraId).c_str());
+
+    return mHalToFwkId.at(cameraId);
 }
 
 std::string LegacyCameraProviderImpl_2_4::mapToHalId(const std::string& cameraId) const
 {
+    if (mFwkToHalId.find(cameraId) == mFwkToHalId.end()) {
+        ALOGI("Remapped FWK ID %s to %s", cameraId.c_str(), cameraId.c_str());
         return cameraId;
+    }
+
+    ALOGI("Remapped FWK ID %s to %s", cameraId.c_str(),
+          mHalToFwkId.at(cameraId).c_str());
+
+    return mFwkToHalId.at(cameraId);
+}
+
+void LegacyCameraProviderImpl_2_4::initIdMapping()
+{
+    std::vector<std::string> mapping;
+    unsigned int id;
+
+    mapping = GetArrayProperty(kIdMapProperty);
+
+    for (id = 0; id < mapping.size(); id++) {
+        std::string halId = std::to_string(id);
+        std::string fwkId = mapping[id];
+	unsigned int tmp;
+
+        if (!android::base::ParseUint(fwkId, &tmp)) {
+            mFwkToHalId.clear();
+            mHalToFwkId.clear();
+            return;
+        }
+
+        mFwkToHalId[fwkId] = halId;
+        mHalToFwkId[halId] = fwkId;
+
+        ALOGI("Mapping HAL ID %s to FWK ID %s",
+              halId.c_str(), fwkId.c_str());
+    }
 }
 
 bool LegacyCameraProviderImpl_2_4::initialize() {
@@ -324,6 +383,8 @@ bool LegacyCameraProviderImpl_2_4::initialize() {
             mPreferredHal3MinorVersion = 3;
     }
 
+    initIdMapping();
+
     mNumberOfLegacyCameras = mModule->getNumberOfCameras();
     for (int i = 0; i < mNumberOfLegacyCameras; i++) {
         struct camera_info info;
@@ -340,7 +401,7 @@ bool LegacyCameraProviderImpl_2_4::initialize() {
             return true;
         }
 
-        std::string cameraIdStr = std::to_string(i);
+        std::string cameraIdStr = mapToFwkId(std::to_string(i));
         mCameraStatusMap[cameraIdStr] = CAMERA_DEVICE_STATUS_PRESENT;
 
         addDeviceNames(i);

@@ -84,6 +84,7 @@ protected:
     int mNumberOfLegacyCameras;
     std::map<std::string, camera_device_status_t> mCameraStatusMap; // camera id -> status
     std::map<std::string, bool> mOpenLegacySupported; // camera id -> open_legacy HAL1.0 supported
+    std::map<std::string, std::string> mFwkToHalId, mHalToFwkId;
     SortedVector<std::string> mCameraIds; // the "0"/"1" legacy camera Ids
     // (cameraId string, hidl device name) pairs
     SortedVector<std::pair<std::string, std::string>> mCameraDeviceNames;
@@ -126,6 +127,7 @@ protected:
 
     std::string mapToFwkId(const std::string& cameraId) const;
     std::string mapToHalId(const std::string& cameraId) const;
+    void initIdMapping();
 };
 
 }  // namespace implementation
