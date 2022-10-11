@@ -123,6 +123,9 @@ protected:
     void removeDeviceNames(int camera_id);
 
     bool isExternalCamera(const std::string& cameraId) const;
+
+    std::string mapToFwkId(const std::string& cameraId) const;
+    std::string mapToHalId(const std::string& cameraId) const;
 };
 
 }  // namespace implementation

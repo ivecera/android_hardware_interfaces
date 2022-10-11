@@ -44,7 +44,6 @@ const std::regex kDeviceNameRE("device@([0-9]+\\.[0-9]+)/legacy/(.+)");
 const char *kHAL3_4 = "3.4";
 const char *kHAL3_5 = "3.5";
 const int kMaxCameraDeviceNameLen = 128;
-const int kMaxCameraIdLen = 16;
 
 bool matchDeviceName(const hidl_string& deviceName, std::string* deviceVersion,
                      std::string* cameraId) {
@@ -69,9 +68,8 @@ using ::android::hardware::camera::common::V1_0::Status;
 
 void LegacyCameraProviderImpl_2_4::addDeviceNames(int camera_id, CameraDeviceStatus status, bool cam_new)
 {
-    char cameraId[kMaxCameraIdLen];
-    snprintf(cameraId, sizeof(cameraId), "%d", camera_id);
-    std::string cameraIdStr(cameraId);
+    std::string cameraId = std::to_string(camera_id);
+    std::string cameraIdStr = mapToFwkId(cameraId);
 
     mCameraIds.add(cameraIdStr);
 
@@ -88,7 +86,7 @@ void LegacyCameraProviderImpl_2_4::addDeviceNames(int camera_id, CameraDeviceSta
             mModule->isOpenLegacyDefined()) {
         // try open_legacy to see if it actually works
         struct hw_device_t* halDev = nullptr;
-        int ret = mModule->openLegacy(cameraId, CAMERA_DEVICE_API_VERSION_1_0, &halDev);
+        int ret = mModule->openLegacy(cameraId.c_str(), CAMERA_DEVICE_API_VERSION_1_0, &halDev);
         if (ret == 0) {
             mOpenLegacySupported[cameraIdStr] = true;
             halDev->close(halDev);
@@ -109,7 +107,7 @@ void LegacyCameraProviderImpl_2_4::addDeviceNames(int camera_id, CameraDeviceSta
 
 void LegacyCameraProviderImpl_2_4::removeDeviceNames(int camera_id)
 {
-    std::string cameraIdStr = std::to_string(camera_id);
+    std::string cameraIdStr = mapToFwkId(std::to_string(camera_id));
 
     mCameraIds.remove(cameraIdStr);
 
@@ -146,9 +144,7 @@ void LegacyCameraProviderImpl_2_4::sCameraDeviceStatusChange(
     }
 
     Mutex::Autolock _l(cp->mCbLock);
-    char cameraId[kMaxCameraIdLen];
-    snprintf(cameraId, sizeof(cameraId), "%d", camera_id);
-    std::string cameraIdStr(cameraId);
+    std::string cameraIdStr = cp->mapToFwkId(std::to_string(camera_id));
     cp->mCameraStatusMap[cameraIdStr] = (camera_device_status_t) new_status;
 
     if (cp->mCallbacks == nullptr) {
@@ -194,7 +190,7 @@ void LegacyCameraProviderImpl_2_4::sTorchModeStatusChange(
 
     Mutex::Autolock _l(cp->mCbLock);
     if (cp->mCallbacks != nullptr) {
-        std::string cameraIdStr(camera_id);
+        std::string cameraIdStr = cp->mapToFwkId(camera_id);
         TorchModeStatus status = (TorchModeStatus) new_status;
         for (auto const& deviceNamePair : cp->mCameraDeviceNames) {
             if (cameraIdStr.compare(deviceNamePair.first) == 0) {
@@ -266,9 +262,19 @@ LegacyCameraProviderImpl_2_4::LegacyCameraProviderImpl_2_4() :
 LegacyCameraProviderImpl_2_4::~LegacyCameraProviderImpl_2_4() {}
 
 bool LegacyCameraProviderImpl_2_4::isExternalCamera(const std::string& cameraId) const {
-    int id = std::stoi(cameraId);
+    int id = std::stoi(mapToHalId(cameraId));
 
     return (id >= mNumberOfLegacyCameras);
+}
+
+std::string LegacyCameraProviderImpl_2_4::mapToFwkId(const std::string& cameraId) const
+{
+        return cameraId;
+}
+
+std::string LegacyCameraProviderImpl_2_4::mapToHalId(const std::string& cameraId) const
+{
+        return cameraId;
 }
 
 bool LegacyCameraProviderImpl_2_4::initialize() {
@@ -334,9 +340,7 @@ bool LegacyCameraProviderImpl_2_4::initialize() {
             return true;
         }
 
-        char cameraId[kMaxCameraIdLen];
-        snprintf(cameraId, sizeof(cameraId), "%d", i);
-        std::string cameraIdStr(cameraId);
+        std::string cameraIdStr = std::to_string(i);
         mCameraStatusMap[cameraIdStr] = CAMERA_DEVICE_STATUS_PRESENT;
 
         addDeviceNames(i);
@@ -461,7 +465,7 @@ Return<Status> LegacyCameraProviderImpl_2_4::setCallback(
     for (auto const& statusPair : mCameraStatusMap) {
         auto status = static_cast<CameraDeviceStatus>(statusPair.second);
         if (isExternalCamera(statusPair.first) && status != CameraDeviceStatus::NOT_PRESENT) {
-            addDeviceNames(std::stoi(statusPair.first), status, true);
+            addDeviceNames(std::stoi(mapToHalId(statusPair.first)), status, true);
         }
     }
 
@@ -534,7 +538,7 @@ Return<void> LegacyCameraProviderImpl_2_4::getCameraDeviceInterface_V1_x(
 
     sp<android::hardware::camera::device::V1_0::implementation::CameraDevice> device =
             new android::hardware::camera::device::V1_0::implementation::CameraDevice(
-                    mModule, cameraId, mCameraDeviceNames);
+                    mModule, mapToHalId(cameraId), mCameraDeviceNames);
 
     if (device == nullptr) {
         ALOGE("%s: cannot allocate camera device for id %s", __FUNCTION__, cameraId.c_str());
@@ -586,6 +590,7 @@ Return<void> LegacyCameraProviderImpl_2_4::getCameraDeviceInterface_V3_x(
         return Void();
     }
 
+    std::string cameraHalId = mapToHalId(cameraId);
     sp<android::hardware::camera::device::V3_2::implementation::CameraDevice> deviceImpl;
 
     // ICameraDevice 3.4 or upper
@@ -593,10 +598,10 @@ Return<void> LegacyCameraProviderImpl_2_4::getCameraDeviceInterface_V3_x(
         ALOGV("Constructing v3.4+ camera device");
         if (deviceVersion == kHAL3_4) {
             deviceImpl = new android::hardware::camera::device::V3_4::implementation::CameraDevice(
-                    mModule, cameraId, mCameraDeviceNames);
+                    mModule, cameraHalId, mCameraDeviceNames);
         } else if (deviceVersion == kHAL3_5) {
             deviceImpl = new android::hardware::camera::device::V3_5::implementation::CameraDevice(
-                    mModule, cameraId, mCameraDeviceNames);
+                    mModule, cameraHalId, mCameraDeviceNames);
         }
         if (deviceImpl == nullptr || deviceImpl->isInitFailed()) {
             ALOGE("%s: camera device %s init failed!", __FUNCTION__, cameraId.c_str());
@@ -624,7 +629,7 @@ Return<void> LegacyCameraProviderImpl_2_4::getCameraDeviceInterface_V3_x(
         case 2: { // Map legacy camera device v3 HAL to Treble camera device HAL v3.2
             ALOGV("Constructing v3.2 camera device");
             deviceImpl = new android::hardware::camera::device::V3_2::implementation::CameraDevice(
-                    mModule, cameraId, mCameraDeviceNames);
+                    mModule, cameraHalId, mCameraDeviceNames);
             if (deviceImpl == nullptr || deviceImpl->isInitFailed()) {
                 ALOGE("%s: camera device %s init failed!", __FUNCTION__, cameraId.c_str());
                 _hidl_cb(Status::INTERNAL_ERROR, nullptr);
@@ -635,7 +640,7 @@ Return<void> LegacyCameraProviderImpl_2_4::getCameraDeviceInterface_V3_x(
         case 3: { // Map legacy camera device v3 HAL to Treble camera device HAL v3.3
             ALOGV("Constructing v3.3 camera device");
             deviceImpl = new android::hardware::camera::device::V3_3::implementation::CameraDevice(
-                    mModule, cameraId, mCameraDeviceNames);
+                    mModule, cameraHalId, mCameraDeviceNames);
             if (deviceImpl == nullptr || deviceImpl->isInitFailed()) {
                 ALOGE("%s: camera device %s init failed!", __FUNCTION__, cameraId.c_str());
                 _hidl_cb(Status::INTERNAL_ERROR, nullptr);
